@@ -308,6 +308,40 @@ EOF
         --qemu-commandline="-smbios type=1,serial=ds=nocloud;h=${VMNAME}.${DOMAIN}"
 }
 
+get-vminfo() {
+    IP=""
+    timeout=60  # seconds
+    echo ""
+    echo "Waiting for $VMNAME IP address..."
+    for ((i = 0; i < timeout; i++)); do
+        DOM=$(virsh -q domifaddr "$VMNAME")
+        read -ra arr <<<"$DOM"
+        if [[ -n "${arr[@]}" ]]; then
+            IP="${arr[3]%/*}"
+        fi
+
+        if [[ -n "$IP" ]]; then
+            break
+        fi
+        sleep 1
+    done
+
+    if [[ -n "$IP" ]]; then
+        echo ""
+        echo "SSH to ${VMNAME}:"
+        echo "  ssh ${IP}"
+        echo "  ssh ubuntu@${IP}"
+        echo ""
+        echo "Checking for ${IP} in known_hosts file"
+        grep -q ${IP} ${HOME}/.ssh/known_hosts &&
+            echo "Found entry for ${IP}. Removing" &&
+            (sed --in-place "/^${IP}/d" ~/.ssh/known_hosts) ||
+            echo "No entries found for ${IP}"
+    else
+        echo "Timed out waiting for DHCP lease"
+    fi
+}
+
 # -------------------------------------------------------------------------
 # Main Execution Flow
 # -------------------------------------------------------------------------
@@ -320,3 +354,4 @@ clone-base
 resize-clone
 create-extra-volume
 vm-setup
+get-vminfo
