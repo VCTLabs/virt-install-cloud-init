@@ -23,7 +23,8 @@ sudo usermod -aG libvirt,kvm $USER
 
 ### **Required Tools (Local or Remote)**
 
-These commands must be available on the host where you run the scripts (local system or the remote hypervisor when using `LIBVIRT_DEFAULT_URI`):
+These commands must be available on the host where you run the scripts
+(local system or the remote hypervisor when using `LIBVIRT_DEFAULT_URI`):
 
 - `virsh`
 - `virt-install`
@@ -77,6 +78,12 @@ OSVARIANT=debian12
 VMPOOL=vm-pool
 CONSOLE="pty,target_type=virtio"
 ```
+
+> [!IMPORTANT]
+> The OS distro names are only as current as the version of `osinfo-db`
+> installed in your environment. If the name is not found, eg, `rocky10`,
+> then you need to edit the template file and change the OSVARIANT to
+> `unknown` in order to install the desired OS version.
 
 ---
 
