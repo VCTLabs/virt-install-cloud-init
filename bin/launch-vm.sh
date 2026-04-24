@@ -194,7 +194,12 @@ resize-clone() {
 }
 
 vm-setup() {
+    NET_ARG=""
     CLOUD_CONFIG_FILE="${CLOUD_CONFIG:-${LVTEMPLATES}/cloud-config.yml}"
+    NET_CONFIG_FILE="${NET_CONFIG:-${LVTEMPLATES}/network-config.yml}"
+    if [[ -f "${NET_CONFIG_FILE}" ]]; then
+        NET_ARG=",network-config=${NET_CONFIG_FILE}"
+    fi
 
     if [[ ! -f "${CLOUD_CONFIG_FILE}" ]]; then
         echo "Error: Cloud-init config file '${CLOUD_CONFIG_FILE}' not found."
@@ -208,32 +213,37 @@ vm-setup() {
         --cpu host-model \
         --disk "vol=${VMPOOL}/${VMVOL},bus=virtio,format=qcow2" \
         --os-variant "${OSVARIANT}" \
-        --network "network=${NETWORK},model=virtio" \
+        --network network="${NETWORK}",model=virtio \
         --virt-type kvm \
-        --cloud-init "user-data=${CLOUD_CONFIG_FILE}" \
+        --cloud-init user-data="${CLOUD_CONFIG_FILE}${NET_ARG}" \
         --noautoconsole \
         --console "${CONSOLE:-}" \
-        --video none \
+        --graphics=spice,port=-1,listen=localhost  \
         --qemu-commandline="-smbios type=1,serial=ds=nocloud;h=${VMNAME}.${DOMAIN}"
 }
 
 get-vminfo() {
-    IP=""
+    IP=${IP:-}
+    if [ -f "${NET_CONFIG_FILE}" ] && [ -z "${IP}" ] ; then
+        echo "Detected NET_CONFIG_FILE in use, aborting VM IP loop."
+        exit 0
+    fi
     timeout=60  # seconds
-    echo ""
-    echo "Waiting for $VMNAME IP address..."
-    for ((i = 0; i < timeout; i++)); do
-        DOM=$(virsh -q domifaddr "$VMNAME")
-        read -ra arr <<<"$DOM"
-        if [[ -n "${arr[@]}" ]]; then
-            IP="${arr[3]%/*}"
-        fi
+    if [[ ! -n "$IP" ]]; then
+        echo "Waiting for $VMNAME IP address..."
+        for ((i = 0; i < timeout; i++)); do
+            DOM=$(virsh -q domifaddr "$VMNAME")
+            read -ra arr <<<"$DOM"
+            if [[ -n "${arr[@]}" ]]; then
+                IP="${arr[3]%/*}"
+            fi
 
-        if [[ -n "$IP" ]]; then
-            break
-        fi
-        sleep 1
-    done
+            if [[ -n "$IP" ]]; then
+                break
+            fi
+            sleep 1
+        done
+    fi
 
     if [[ -n "$IP" ]]; then
         echo ""
