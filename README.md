@@ -1,7 +1,7 @@
 # **virt-install-cloud**
 
 Bash scripts and templates to **create, deploy, and remove cloud-init-enabled virtual machines**
-using `virt-install`. It has been tested on **Ubuntu 24.04 LTS** and works
+using `virt-install`. It has been tested on **Ubuntu 24.04 LTS** and **Gentoo** and works
 on other recent Ubuntu/Debian systems with a proper libvirt setup.
 
 ---
@@ -15,10 +15,10 @@ sudo apt update
 sudo apt install libvirt-daemon-system libvirt-clients qemu-kvm virtinst wget cloud-image-utils
 ```
 
-For non-root usage, add your user to the `libvirt` and `kvm` groups:
+For non-root usage, add your user to the `libvirt`, `qemu`, and `kvm` groups:
 
 ```bash
-sudo usermod -aG libvirt,kvm $USER
+sudo usermod -aG libvirt,kvm,qemu $USER
 ```
 
 > [!IMPORTANT]
@@ -36,12 +36,14 @@ sudo usermod -aG libvirt,kvm $USER
 Example templates are provided in the `templates` directory:
 
 - `cloud-config.yml-example`
+- `network-config.yml-example`
 - `launch-vm.ini-example`
 
 To set up your configuration:
 
 ```bash
 cp templates/cloud-config.yml-example templates/cloud-config.yml
+cp templates/network-config.yml-example templates/network-config.yml
 cp templates/launch-vm.ini-example templates/launch-vm.ini
 ```
 
@@ -49,6 +51,7 @@ Edit:
 
 - **`launch-vm.ini`** to configure network, CPUs, RAM, storage pool, etc.
 - **`cloud-config.yml`** to define the default user, password, and SSH key.
+- **`network-config.yml`** to use anything besides default DHCP.
 
 ### **Adding New Distributions**
 
@@ -148,14 +151,16 @@ export LAUNCH_VM_INI="/path/to/custom-launch-vm.ini"
 
 > Uses `/path/to/custom-launch-vm.ini` instead of `templates/launch-vm.ini`.
 
-### **Use a custom cloud-init file**
+### **Use a custom cloud-init or network config file**
 
 ```bash
 export CLOUD_CONFIG="/custom/path/cloud-config.yml"
+export NET_CONFIG="/custom/path/network-config.yml"
 ./launch-vm.sh -d ubuntu22.04 -n test-vm
 ```
 
-> Uses `/custom/path/cloud-config.yml` instead of `templates/cloud-config.yml`.
+> Uses `/custom/path/cloud-config.yml` instead of `templates/cloud-config.yml`
+> and/or `/custom/path/network-config.yml` instead of `templates/network-config.yml`.
 
 ---
 
