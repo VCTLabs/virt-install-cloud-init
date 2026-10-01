@@ -1,0 +1,50 @@
+#cloud-config
+manage_etc_hosts: true
+timezone: America/Los_Angeles
+
+package_upgrade: true
+package_update: true
+packages:
+  - openssh-server
+  - sudo
+  - net-tools
+  - bind9-utils
+  - curl
+  - wget
+  - git
+  - git-lfs
+  - cloud-guest-utils
+  - nano
+
+ntp:
+  enabled: true
+  ntp_client: chrony  # Uses cloud-init default chrony configuration
+
+runcmd:
+  - echo UsePAM yes >> /etc/ssh/sshd_config
+  - [systemctl, enable, sshd]
+  - [systemctl, start, sshd]
+  - sed -i 's|IPV6=yes|IPV6=no|' /etc/default/ufw
+  - ufw allow OpenSSH
+  #- ufw allow 8080
+  - ufw enable
+
+users:
+  - name: sarnold
+    gecos: Steve Arnold
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    groups: [sudo, wheel, users]
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMpS41XaWvfHnctCrXUH00xM2eD1E07XEDSqp08w70GK sarnold@vctlabs.com
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGnYwxfHhMjoxDTgMxAMQTWbPnsDyhtUYVm7cJ3mpJDa stephen.arnold42@gmail.com
+
+swap:
+  filename: /swapfile.img
+  size: "auto"
+  maxsize: 2147483648  # 2GiB
+
+power_state:
+  mode: poweroff
+  timeout: 30
+  condition: True

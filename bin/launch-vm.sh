@@ -264,12 +264,16 @@ vm-setup() {
         exit 1
     fi
 
-    META_DATA_FILE="$(mktemp -t meta-data-XXXXXX)"
-    trap 'rm -f "${META_DATA_FILE}"' EXIT
-    cat > "${META_DATA_FILE}" <<EOF
-instance-id: iid-${VMNAME}
-local-hostname: ${VMNAME}
-EOF
+    #META_DATA_FILE="$(mktemp -t meta-data-XXXXXX)"
+    #trap 'rm -f "${META_DATA_FILE}"' EXIT
+    #cat > "${META_DATA_FILE}" <<EOF
+#instance-id: iid-${VMNAME}
+#local-hostname: ${VMNAME}
+#EOF
+
+# uncomment the above if you want instance IDs, otherwise use empty file
+    META_DATA_FILE="$(pwd)/meta-data"
+    touch "$META_DATA_FILE"
 
     local console_arg=()
     if [[ -n "${CONSOLE:-}" ]]; then
