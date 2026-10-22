@@ -1,0 +1,68 @@
+#cloud-config
+#
+# create devel VM host with basic tools and several dev users
+# packages like devel config but without jenkins
+#
+manage_etc_hosts: true
+timezone: America/Los_Angeles
+
+package_upgrade: true
+package_update: true
+packages:
+  - openssh-server
+  - sudo
+  - net-tools
+  - bind9-utils
+  - curl
+  - nano
+  - wget
+  - git
+  - git-lfs
+  - cloud-guest-utils
+  - default-jre-headless
+  - apt-transport-https
+
+ntp:
+  enabled: true
+  ntp_client: chrony  # Uses cloud-init default chrony configuration
+
+runcmd:
+  - update-grub
+  - echo UsePAM yes >> /etc/ssh/sshd_config
+  - [systemctl, enable, sshd]
+  - [systemctl, start, sshd]
+  - ufw allow OpenSSH
+  #################################
+  - ufw enable
+  - usermod -aG docker sarnold
+  # add and enable login manager and Mate
+  - apt install -y mate-desktop-environment lightdm mate-desktop-environment-extras
+  - dpkg-reconfigure lightdm
+  - [systemctl, enable, lightdm]
+  # install docker tools and docker-compose-plugin
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+  - apt update && apt install -y docker-ce docker-compose-plugin
+  - systemctl enable docker && systemctl restart docker
+
+users:
+  - name: sarnold
+    gecos: Steve Arnold
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    groups: [sudo, wheel, users]
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMpS41XaWvfHnctCrXUH00xM2eD1E07XEDSqp08w70GK sarnold@vctlabs.com
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGnYwxfHhMjoxDTgMxAMQTWbPnsDyhtUYVm7cJ3mpJDa stephen.arnold42@gmail.com
+
+swap:
+  filename: /swapfile.img
+  size: "auto"
+  maxsize: 8589934592  # 8GiB
+
+power_state:
+  mode: poweroff
+  timeout: 30
+  condition: True
+
+
