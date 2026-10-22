@@ -1,0 +1,181 @@
+#cloud-config
+#
+# create devel VM host with basic tools and several dev users
+# packages like devel config but without jenkins
+#
+manage_etc_hosts: true
+timezone: America/Los_Angeles
+
+# this uses default apt-cacher-ng port, change/enable as needed
+apt:
+  http_proxy: http://192.168.0.151:3142
+  # to use nodejs pkgs from deb.nodesource.com you MUST add apt-cacher settings, something like:
+  # PassThroughPattern: (security\.ubuntu\.com|deb\.nodesource\.com|download\.docker\.com):443$
+  # and then set https proxy host to "DIRECT" instead of the URL port string
+  https_proxy: DIRECT
+  # http_proxy: http://192.168.0.151:3142
+
+write_files:
+- path: /root/init-user-db.sh
+  permissions: '0755'
+  content: |
+    #!/bin/bash
+
+    set -e
+
+    psql -v ON_ERROR_STOP=1 --username "postgres" <<-EOSQL
+        CREATE USER cdash PASSWORD 'cdashlogin';
+        CREATE DATABASE cdash;
+        GRANT ALL PRIVILEGES ON DATABASE cdash TO cdash;
+        ALTER SCHEMA public OWNER TO cdash;
+        \c cdash
+        GRANT CREATE ON SCHEMA public TO cdash;
+    EOSQL
+
+- path: /root/env.prod
+  content: |
+    APP_NAME=CDash
+    APP_ENV=production
+    APP_DEBUG=false
+    APP_KEY=
+    APP_URL=https://localhost:8080
+
+    SSL_CERTIFICATE_FILE=/etc/ssl/certs/ssl-cert-snakeoil.pem
+    SSL_CERTIFICATE_KEY_FILE=/etc/ssl/private/ssl-cert-snakeoil.key
+    NUM_WORKERS=1
+
+    DB_DATABASE=cdash
+    DB_PASSWORD=cdashlogin
+    DB_HOST=localhost
+    #DB_PORT=
+    DB_USERNAME=cdash
+
+    QUEUE_CONNECTION=database
+
+- path: /root/cdash-site.conf
+  content: |
+    <IfFile "/etc/ssl/certs/ssl-cert-snakeoil.pem">
+        <VirtualHost *:8080>
+            DocumentRoot "/var/www/cdash/public"
+            SSLEngine on
+            SSLCertificateFile /etc/ssl/certs/ssl-cert-snakeoil.pem
+            SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
+            <Directory "/var/www/cdash/public">
+                AllowOverride All
+                Require all granted
+            </Directory>
+        </VirtualHost>
+    </IfFile>
+    <IfFile !"/etc/ssl/certs/ssl-cert-snakeoil.pem">
+        <VirtualHost *:8080>
+            <Directory "/var/www/cdash/public">
+                AllowOverride All
+                Require all granted
+            </Directory>
+            DocumentRoot "/var/www/cdash/public"
+        </VirtualHost>
+    </IfFile>
+
+package_upgrade: true
+package_update: true
+packages:
+  - tree
+  - unzip
+  - pkg-config
+  - icu-devtools
+  - libicu-dev
+  - libxml2-dev
+  - libxslt1-dev
+
+ntp:
+  enabled: true
+  ntp_client: chrony  # Uses cloud-init default chrony configuration
+
+runcmd:
+  - update-grub
+  - echo UsePAM yes >> /etc/ssh/sshd_config
+  - [systemctl, enable, sshd]
+  - [systemctl, start, sshd]
+  - ufw allow OpenSSH
+  - ufw allow 8080
+  - ufw enable
+  #################################
+  - DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  # add php and build bits for extension tool
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y mkcert postgresql php libapache2-mod-php php-cli php-ldap php-xdebug php-bcmath php-zip php-bz2 php-curl php-gd php-json php-mbstring php-pdo-mysql php-xsl php-posix php-xml php-tokenizer php-fileinfo php-pgsql php-gd
+  # extension tool build deps
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y autoconf automake libtool m4 make gcc php-dev
+  # install php extension tool
+  - |
+    curl -fL --output pie.phar https://github.com/php/pie/releases/latest/download/pie.phar
+    mv -v pie.phar /usr/local/bin/pie
+    chmod +x /usr/local/bin/pie
+  # install node like upstream Dockerfile
+  - |
+    #mkdir -p /etc/apt/keyrings
+    #curl -fL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+    #echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
+    #apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y npm
+  # add and enable login manager and Mate
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y mate-desktop-environment lightdm mate-desktop-environment-extras xauth xvfb epiphany-browser
+  - DEBIAN_FRONTEND=noninteractive dpkg-reconfigure lightdm
+  # add cdash to apache doc root and install/run composer
+  - |
+    curl -fL --output composer-setup.php https://getcomposer.org/installer
+    HOME=/var/www php composer-setup.php --install-dir=/usr/local/bin --filename=composer
+    php -r "unlink('composer-setup.php');"
+    mkdir -p /var/www/cdash /var/www/.cache/composer /var/www/.npm
+    chown www-data:www-data -R /var/www
+    su - www-data -s /bin/bash
+    su - www-data -s /bin/bash -c 'git clone https://github.com/VCTLabs/CDash -b releases/5.5 /var/www/cdash'
+    VER=$(php -r 'echo PHP_VERSION, PHP_EOL;' | cut -c-3) && mkdir -p /etc/php/$VER/apache2
+    VER=$(php -r 'echo PHP_VERSION, PHP_EOL;' | cut -c-3) && cp -v  /var/www/cdash/php.ini /etc/php/$VER/apache2/
+    chmod +x /var/www/cdash/install.sh
+    chown www-data:www-data /root/*
+    cp -v /root/init-user-db.sh /var/www/cdash/
+    cp -v /root/env.prod /var/www/cdash/.env
+    chown www-data /var/www/cdash/.env /var/www/cdash/init-user-db.sh
+    su - postgres -s /bin/bash  /var/www/cdash/init-user-db.sh
+    #su - www-data -s /bin/bash -c 'cd /var/www/cdash; composer install --no-dev --prefer-dist --optimize-autoloader; composer clear-cache; cd -'
+    #su - www-data -s /bin/bash -c 'cd /var/www/cdash; npm install --omit=dev; cd -'
+    su - www-data -s /bin/bash -c 'cd /var/www/cdash; composer install --no-scripts --no-dev --prefer-dist; cd -'
+    su - www-data -s /bin/bash -c 'cd /var/www/cdash; ./install.sh; cd -'
+    su - www-data -s /bin/bash -c 'cd /var/www/cdash; php artisan key:generate; cd -'
+    su - www-data -s /bin/bash -c 'cd /var/www/cdash; php artisan config:cache; cd -'
+  # apache setup
+  - |
+    cp -v /root/cdash-site.conf /etc/apache2/sites-available/
+    echo 'Listen 8080' > /etc/apache2/ports.conf
+    a2dissite 000-default
+    a2ensite cdash-site
+    a2enmod rewrite
+    a2enmod headers
+    a2enmod ssl
+    chown -R www-data:www-data /etc/apache2
+    chgrp -R www-data /var/www/cdash
+    chmod -R g+rw /var/www/cdash
+    ln -s /var/www/cdash /cdash
+    systemctl restart apache2
+
+users:
+  - name: sarnold
+    gecos: Steve Arnold
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    groups: [sudo, users]
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMpS41XaWvfHnctCrXUH00xM2eD1E07XEDSqp08w70GK sarnold@vctlabs.com
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGnYwxfHhMjoxDTgMxAMQTWbPnsDyhtUYVm7cJ3mpJDa stephen.arnold42@gmail.com
+
+swap:
+  filename: /swapfile.img
+  size: "auto"
+  maxsize: 8589934592  # 8GiB
+
+power_state:
+  mode: poweroff
+  timeout: 30
+  condition: True
+
+
