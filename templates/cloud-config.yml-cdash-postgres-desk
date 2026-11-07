@@ -1,9 +1,11 @@
 #cloud-config
 #
-# create devel VM host with basic tools and several dev users
-# packages like devel config but without jenkins
+# create cdash VM host with apache, mkcert, php 8.4, postgresql, and
+# Mate desktop. NOTE this requires Ubuntu 26.04 resolute
 #
-manage_etc_hosts: true
+hostname: cdash
+create_hostname_file: true
+fqdn: cdash.lan
 timezone: America/Los_Angeles
 
 # this uses default apt-cacher-ng port, change/enable as needed
@@ -13,9 +15,27 @@ apt:
   # PassThroughPattern: (security\.ubuntu\.com|deb\.nodesource\.com|download\.docker\.com):443$
   # and then set https proxy host to "DIRECT" instead of the URL port string
   https_proxy: DIRECT
-  # http_proxy: http://192.168.0.151:3142
+  # https_proxy: http://192.168.0.151:3142
+  sources:
+    mozilla-ppa:
+      source: "ppa:mozillateam/ppa"
+
 
 write_files:
+# the first two configure the above mozilla PPA to install/update firefox-esr
+# instead of the firefox snap
+- path: /etc/apt/preferences.d/mozilla-firefox
+  content: |
+    Package: *
+    Pin: release o=LP-PPA-mozillateam
+    Pin-Priority: 1001
+
+- path: /etc/apt/preferences.d/firefox-no-snap
+  content: |
+    Package: firefox*
+    Pin: release o=Ubuntu*
+    Pin-Priority: -1
+
 - path: /root/init-user-db.sh
   permissions: '0755'
   content: |
@@ -32,6 +52,22 @@ write_files:
         GRANT CREATE ON SCHEMA public TO cdash;
     EOSQL
 
+- path: /etc/systemd/system/cdash-worker@.service
+  content: |
+    [Unit]
+    Description=CDash queue worker #%i
+
+    [Service]
+    Type=simple
+    User=www-data
+    WorkingDirectory=/var/www/cdash
+    Restart=always
+    RestartSec=5s
+    ExecStart=/usr/bin/php artisan queue:work --max-time=3600
+
+    [Install]
+    WantedBy=multi-user.target
+
 - path: /root/env.prod
   content: |
     APP_NAME=CDash
@@ -40,8 +76,8 @@ write_files:
     APP_KEY=
     APP_URL=https://localhost:8080
 
-    SSL_CERTIFICATE_FILE=/etc/ssl/certs/ssl-cert-snakeoil.pem
-    SSL_CERTIFICATE_KEY_FILE=/etc/ssl/private/ssl-cert-snakeoil.key
+    SSL_CERTIFICATE_FILE=/var/www/localhost.pem
+    SSL_CERTIFICATE_KEY_FILE=/var/www/localhost-key.pem
     NUM_WORKERS=1
 
     DB_DATABASE=cdash
@@ -52,21 +88,72 @@ write_files:
 
     QUEUE_CONNECTION=database
 
+    AUTOREMOVE_BUILDS=true
+    BUILDS_PER_PROJECT=0
+    USER_CREATE_PROJECTS=true
+    MAX_PROJECT_VISIBILITY=PUBLIC
+
+    MINIMUM_PASSWORD_LENGTH=5
+    MINIMUM_PASSWORD_COMPLEXITY=2
+    PASSWORD_COMPLEXITY_COUNT=1
+
+    REGISTRATION_EMAIL_VERIFY=false
+    VALIDATE_SUBMISSIONS=SILENT
+    SHOW_LAST_SUBMISSION=false
+    USER_CREATE_PROJECTS=true
+
+    # Default is six months.
+    # 0 here means that tokens do not expire.
+    TOKEN_DURATION=15811200
+
+    # mail.php
+    #MAIL_MAILER=smtp
+    #MAIL_HOST=smtp.mailgun.org
+    #MAIL_PORT=587
+    #MAIL_FROM_ADDRESS=
+    #MAIL_FROM_NAME=CDash
+    #MAIL_REPLY_ADDRESS=
+    #MAIL_USERNAME=null
+    #MAIL_PASSWORD=null
+    #MAIL_ENCRYPTION=null
+    # https://laravel.com/framework/docs/mail
+
+    # auth.php
+    # (currently, users or ldap, defaults to users if not defined)
+    # CDASH_AUTHENTICATION_PROVIDER=ldap
+
+    # Whether or not "normal" username+password authentication is enabled
+    USERNAME_PASSWORD_AUTHENTICATION_ENABLED=true
+
+    # Whether or not "normal" username+password registration form submission is enabled
+    USER_REGISTRATION_FORM_ENABLED=true
+
+    # Whether or not a Project administrator can register a user
+    PROJECT_ADMIN_REGISTRATION_FORM_ENABLED=true
+
+    # Require all new projects to use authenticated submissions.
+    # Instance administrators can override this, and this setting has no effect on
+    # existing projects.
+    # REQUIRE_AUTHENTICATED_SUBMISSIONS=false
+
 - path: /root/cdash-site.conf
   content: |
-    <IfFile "/etc/ssl/certs/ssl-cert-snakeoil.pem">
+    <IfFile "/var/www/localhost.pem">
         <VirtualHost *:8080>
             DocumentRoot "/var/www/cdash/public"
             SSLEngine on
-            SSLCertificateFile /etc/ssl/certs/ssl-cert-snakeoil.pem
-            SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
+            SSLCertificateFile /var/www/localhost.pem
+            SSLCertificateKeyFile /var/www/localhost-key.pem
             <Directory "/var/www/cdash/public">
                 AllowOverride All
                 Require all granted
             </Directory>
+            <FilesMatch "\.(?:cgi|shtml|phtml|php)$">
+                SSLOptions +StdEnvVars
+            </FilesMatch>
         </VirtualHost>
     </IfFile>
-    <IfFile !"/etc/ssl/certs/ssl-cert-snakeoil.pem">
+    <IfFile !"/var/www/localhost.pem">
         <VirtualHost *:8080>
             <Directory "/var/www/cdash/public">
                 AllowOverride All
@@ -76,9 +163,26 @@ write_files:
         </VirtualHost>
     </IfFile>
 
+- path: /root/policies.json
+  content: |
+    {
+      "policies": {
+        "Homepage": {
+          "URL": "https://start.ubuntu-mate.org/",
+          "Locked": false,
+          "StartPage": "homepage"
+        },
+        "Certificates": {
+          "Install": ["/etc/ssl/rootCA.pem", "/var/www/localhost.pem"]
+        }
+      }
+    }
+
 package_upgrade: true
 package_update: true
 packages:
+  - openssl
+  - mkcert
   - tree
   - unzip
   - pkg-config
@@ -102,7 +206,7 @@ runcmd:
   #################################
   - DEBIAN_FRONTEND=noninteractive apt-get update -qq
   # add php and build bits for extension tool
-  - DEBIAN_FRONTEND=noninteractive apt-get install -y mkcert postgresql php libapache2-mod-php php-cli php-ldap php-xdebug php-bcmath php-zip php-bz2 php-curl php-gd php-json php-mbstring php-pdo-mysql php-xsl php-posix php-xml php-tokenizer php-fileinfo php-pgsql php-gd
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql php libapache2-mod-php php-cli php-ldap php-xdebug php-bcmath php-zip php-bz2 php-curl php-gd php-json php-mbstring php-pdo-mysql php-xsl php-posix php-xml php-tokenizer php-fileinfo php-pgsql php-gd
   # extension tool build deps
   - DEBIAN_FRONTEND=noninteractive apt-get install -y autoconf automake libtool m4 make gcc php-dev
   # install php extension tool
@@ -110,16 +214,14 @@ runcmd:
     curl -fL --output pie.phar https://github.com/php/pie/releases/latest/download/pie.phar
     mv -v pie.phar /usr/local/bin/pie
     chmod +x /usr/local/bin/pie
-  # install node like upstream Dockerfile
-  - |
-    #mkdir -p /etc/apt/keyrings
-    #curl -fL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-    #echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
-    #apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y npm
+  # install nodejs pkg manager
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y npm
   # add and enable login manager and Mate
-  - DEBIAN_FRONTEND=noninteractive apt-get install -y mate-desktop-environment lightdm mate-desktop-environment-extras xauth xvfb epiphany-browser
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y mate-desktop-environment lightdm mate-desktop-environment-extras xauth xvfb epiphany-browser firefox-esr
   - DEBIAN_FRONTEND=noninteractive dpkg-reconfigure lightdm
+  - apt-cache policy firefox-esr
+  # local project tools for testing local cdash instance
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y tox redis-server libjson-c-dev libhiredis-dev libgtest-dev libgmock-dev lcov
   # add cdash to apache doc root and install/run composer
   - |
     curl -fL --output composer-setup.php https://getcomposer.org/installer
@@ -137,14 +239,21 @@ runcmd:
     cp -v /root/env.prod /var/www/cdash/.env
     chown www-data /var/www/cdash/.env /var/www/cdash/init-user-db.sh
     su - postgres -s /bin/bash  /var/www/cdash/init-user-db.sh
-    #su - www-data -s /bin/bash -c 'cd /var/www/cdash; composer install --no-dev --prefer-dist --optimize-autoloader; composer clear-cache; cd -'
-    #su - www-data -s /bin/bash -c 'cd /var/www/cdash; npm install --omit=dev; cd -'
     su - www-data -s /bin/bash -c 'cd /var/www/cdash; composer install --no-scripts --no-dev --prefer-dist; cd -'
+    su - www-data -s /bin/bash -c 'cd /var/www/cdash; php artisan graphiql:download-assets; cd -'
     su - www-data -s /bin/bash -c 'cd /var/www/cdash; ./install.sh; cd -'
     su - www-data -s /bin/bash -c 'cd /var/www/cdash; php artisan key:generate; cd -'
     su - www-data -s /bin/bash -c 'cd /var/www/cdash; php artisan config:cache; cd -'
+  # setup dev cert
+  - |
+    CAROOT="/root/mkcert" mkcert -install
+    CAROOT="/root/mkcert" mkcert -cert-file /var/www/localhost.pem -key-file /var/www/localhost-key.pem $(hostname) $(hostname).lan localhost 127.0.0.1 ::1
+    ls -la /root/mkcert
+    cp /root/mkcert/rootCA.pem /etc/ssl/
+    cp /root/policies.json /etc/firefox/policies/policies.json
   # apache setup
   - |
+    cd /var/www && git config --system --add safe.directory '*'
     cp -v /root/cdash-site.conf /etc/apache2/sites-available/
     echo 'Listen 8080' > /etc/apache2/ports.conf
     a2dissite 000-default
@@ -157,6 +266,8 @@ runcmd:
     chmod -R g+rw /var/www/cdash
     ln -s /var/www/cdash /cdash
     systemctl restart apache2
+    systemctl enable cdash-worker@1
+    systemctl enable cdash-worker@2
 
 users:
   - name: sarnold

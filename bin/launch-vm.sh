@@ -311,6 +311,7 @@ vm-setup() {
         --import \
         --cloud-init "user-data=${CLOUD_CONFIG_FILE},meta-data=${META_DATA_FILE}${NET_ARG}" \
         --noautoconsole \
+        --video virtio \
         "${console_arg[@]}" \
         --graphics=spice,port=-1,listen=localhost  \
         --qemu-commandline="-smbios type=1,serial=ds=nocloud;h=${VMNAME}.${DOMAIN}"
